@@ -1,0 +1,121 @@
+ID_FATTURA;Data;ID_CLIENTE;TIPO;NR;ID_COMMESSA;Fatturato_gg;Fatturato_Spese;Fatturato_TOT;Note;Riferimento_Ordine;Data_Ordine;Tempi_Pagamento;Scadenza_Pagamento;Data_Pagamento;Valore_Pagato;Data_Creazione;ID_UTENTE_CREAZIONE;Data_Modifica;ID_UTENTE_MODIFICA
+;31/01/25;CLI0006;Fattura;25_001;COM0003;1550;250;1800;"Attivit… di supporto consulenziale c/o il Vostro 
+stabilimento di Mantova. ";;;30;02/03/25;;;;;;
+;23/12/24;CLI0006;Fattura;24_001;COM0003;1838;;1838;"Attivit… di supporto consulenziale c/o il Vostro 
+stabilimento di Mantova. ";;;30;22/01/25;20/02/25;;;;;
+;23/12/24;CLI0005;Fattura;24_002;COM0002;725;;725;;;;;23/12/24;27/02/25;;;;;
+;23/12/24;CLI0007;Fattura;24_003;COM0004;1730;;1730;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena. ";;;30;22/01/25;31/01/25;;;;;
+;23/12/24;CLI0003;Fattura;24_004;COM0001;3987,5;;3987,5;"Attivit… di consulenza svolta da Alessandro Vaglio come da 
+Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Giorgio Bevilacqua come da 
+Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Stefano Colombo come da 
+Vostro ordine n. 7130017952 del 27/09/2024. 
+Coordinamento (10% attivit… svolta)";;;;23/12/24;24/01/25;;;;;
+;31/12/24;CLI0016;Fattura;24_005;COM0005;5425;;5425;;;;;31/12/24;;;;;;
+;31/01/25;CLI0007;Fattura;25_002;COM0004;1550;250;1800;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena. ";;;30;02/03/25;;;;;;
+;31/01/25;CLI0005;Fattura;25_004;COM0002;725;90;815;"Attivit… di consulenza svolta da Giorgio Troni come da nostra 
+offerta del 26/07/24. ";;;;31/01/25;;;;;;
+;31/01/25;CLI0003;Fattura;25_003;COM0001;5637;;5637;"Attivit… di consulenza svolta da Alessandro Vaglio come da 
+Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Giorgio Bevilacqua come da 
+Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Stefano Colombo come da 
+Vostro ordine n. 7130017952 del 27/09/2024. 
+Coordinamento (10% attivit… svolta)";n. 7130017952;27/09/24;;31/01/25;;;;;;
+;28/02/25;CLI0007;Fattura;25_005;COM0004;775;90;865;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena.";;;30;30/03/25;;;;;;
+;28/02/25;CLI0006;Fattura;25_006;COM0003;1550;250;1800;"Attivit… di supporto consulenziale c/o il Vostro 
+stabilimento di Mantova. ";;;30;30/03/25;;;;;;
+;28/02/25;CLI0003;Fattura;25_007;COM0001;17710;;17710;"Attivit… di consulenza svolta da Alessandro Vaglio come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+ 
+Attivit… di consulenza svolta da Giorgio Bevilacqua 
+come da Vostro ordine n. 7130017952 del 27/09/2024. 
+ 
+Attivit… di consulenza svolta da Stefano Colombo come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+ 
+Coordinamento (10% attivit… svolta)    ";n. 7130017952;27/09/24;;28/02/25;;;;;;
+;31/03/25;CLI0011;Fattura;25_008;COM0010;6200;;6200;"Attivit… di coaching individuale Bertagni come da Vostro 
+ordine 4511977261 del 04/02/25. ";n. 4511977261;04/02/25;;31/03/25;;;;;;
+;31/03/25;CLI0009;Fattura;25_009;COM0009;22320;;22320;"Attivit… di Leading the future 1 come da Vostro ordine 
+4511977300 del 04/02/25.";n. 4511977300;04/02/25;;31/03/25;;;;;;
+;31/03/25;CLI0003;Fattura;25_010;COM0001;8827;;8827;"Attivit… di consulenza svolta da Alessandro Vaglio come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+ 
+Attivit… di consulenza svolta da Giorgio Bevilacqua 
+come da Vostro ordine n. 7130017952 del 27/09/2024. 
+ 
+Attivit… di consulenza svolta da Stefano Colombo come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+ 
+Coordinamento (10% attivit… svolta)  ";n. 7130017952;27/09/24;;31/03/25;;;;;;
+;31/03/25;CLI0007;Fattura;25_011;COM0004;1550;90;1640;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena. ";;;30;30/04/25;;;;;;
+;31/03/25;CLI0006;Fattura;25_012;COM0003;1550;290;1840;"Attivit… di supporto consulenziale c/o il Vostro 
+stabilimento di Mantova.";;;30;30/04/25;;;;;;
+;31/03/25;CLI0013;Fattura;25_013;COM0007;11550;1000;12550;"Attivit… di formazione Team Naturale come va Vs ordine 
+1020201558 del 13/03/25. ";n. 1020201558;13/03/25;30;30/04/25;;;;;;
+;30/04/25;CLI0003;Fattura;25_014;COM0001;3300;;3300;"Attivit… di consulenza svolta da Alessandro Vaglio come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Stefano Colombo come 
+da Vostro ordine n. 7130017952 del 27/09/2024.";n. 7130017952;27/09/24;30;30/05/25;;;;;;
+;30/04/25;CLI0007;Fattura;25_015;COM0004;1550;90;1640;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena. ";;;30;30/05/25;;;;;;
+;30/04/25;CLI0006;Fattura;25_016;COM0003;1550;279,5;1829,5;"Attivit… di supporto consulenziale c/o il Vostro 
+stabilimento di Mantova. ";;;30;30/05/25;;;;;;
+;31/05/25;CLI0013;Fattura;25_017;COM0006;21450;;21450;"Attivit… di supporto consulenziale come da vs ordine   
+1020203362. ";n. 1020203362;;30;30/06/25;;;;;;
+;31/05/25;CLI0003;Fattura;25_018;COM0001;4840;;4840;"Attivit… di consulenza svolta da Alessandro Vaglio come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Giorgio Bevilacqua 
+come da Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Stefano Colombo come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+Coordinamento (10% attivit… svolta)              ";n. 7130017952;27/09/24;30;30/06/25;;;;;;
+;31/05/25;CLI0009;Fattura;25_019;COM0009;16740;;16740;"Attivit… di Leading the future 2 come da Vostro ordine 
+4511977300 del 04/02/25. ";n. 4511977300;04/02/25;60;30/07/25;;;;;;
+;31/05/25;CLI0013;Fattura;25_020;COM0011;9832,5;;9832,5;"Attivit… di Coaching individuale  come da nostra offerta 
+del 17/04/25.";;17/04/25;60;30/07/25;;;;;;
+;31/05/25;CLI0010;Nota_Accredito;25_021;COM0011;-9832,5;;-9832,5;"Nota di credito a storno totale nostra fattura n. 20 del 
+31/05/25 per errata fatturazione.";;17/04/25;60;30/07/25;;;;;;
+;31/05/25;CLI0010;Fattura;25_022;COM0011;9832,5;;9832,5;"Attivit… di Coaching individuale come da Vostro ordine 
+n. 4512037132. ";n. 4512037132;;60;30/07/25;;;;;;
+;30/06/25;CLI0006;Fattura;25_024;COM0003;1550;250;1800;"Attivit… di supporto consulenziale c/o il Vostro 
+stabilimento di Mantova. 
+Viaggio a/r ";;;30;30/07/25;;;;;;
+;30/06/25;CLI0007;Fattura;25_023;COM0004;1550;137;1687;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena. 
+Viaggio a/r  
+Spese   ";;;30;30/07/25;;;;;;
+;30/06/25;CLI0014;Fattura;25_025;COM0014;7920;140;8060;"Attivit… di analisi culturale come da nostra offerta del 11   
+dicembre 2024  (come  da accordi c/Vs Sirio Pari). 
+Viaggio a/r  
+Coordinamento (10%)       ";;31/12/24;30;30/07/25;;;;;;
+;30/06/25;CLI0003;Fattura;25_026;COM0001;4785;;4785;"Attivit… di consulenza svolta da Giorgio Bevilacqua come da Vostro ordine n. 7130017952 del 27/09/2024.  
+Attivit… di consulenza svolta da Stefano Colombo come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+Coordinamento (10% attivit… svolta)      ";n. 7130017952;27/09/24;30;30/07/25;;;;;;
+;30/07/25;CLI0007;Fattura;25_027;COM0004;1550;250;1800;"Attivit… di supporto consulenziale c/o il Vostro stabilimento 
+di Modena. 
+Viaggio a/r ";;;30;29/08/25;;;;;;
+;29/07/25;CLI0014;Fattura;25_028;COM0014;7040;140;7180;"Attivit… di formazione relativa al ?Piano  formazione 2025 ? 
+ID 438026 . 
+Viaggio a/r  
+Coordinamento (10%)    ";n. 438026;;30;28/08/25;;;;;;
+;30/07/25;CLI0003;Fattura;25_029;COM0001;5692;;5692;"Attivit… di consulenza svolta da Alessandro Vaglio come 
+da Vostro ordine n. 7130017952 del 27/09/2024. 
+Attivit… di consulenza svolta da Giorgio Bevilacqua 
+come da Vostro ordine n. 7130017952 del 27/09/2024. 
+Coordinamento (10% attivit… svolta)     ";n. 7130017952;27/09/24;30;29/08/25;;;;;;
+;30/07/25;CLI0012;Fattura;25_030;COM0012;14416,5;;14416,5;"Audit Culturale Reggio Emilia e Corteolona come da 
+Vostro ordine n. 4512064618. ";n. 4512064618;;60;28/09/25;;;;;;
+;30/07/25;CLI0013;Fattura;25_031;COM0008;4125;;4125;"Attivit… di Audit Culturale Direzione HSEE come da Vs. 
+ordine n. 1020205239. ";n. 1020205239;;30;29/08/25;;;;;;
+;31/07/25;CLI0017;Fattura;25_032;COM0015;12800;290;13090;"Attivit… di Project Ceres Assessment della 
+manutenzione e dell?Engineering. 
+Viaggio a/r  
+Park ";;;30;30/08/25;;;;;;

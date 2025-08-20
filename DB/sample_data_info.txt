@@ -1,0 +1,14 @@
+Esempio di file Excel per importazione
+
+Fogli supportati: ANA_CLIENTI, ANA_COLLABORATORI, ANA_COMMESSE, ANA_TASK, ANA_TARIFFE_COLLABORATORI, FACT_GIORNATE, FACT_FATTURE
+
+=== ANA_CLIENTI ===
+ID_CLIENTE,Cliente,Denominazione_Sociale,Indirizzo,Citta,CAP,Provincia,P_IVA
+CLI0001,ALBINI,ALBINI SRL,Via Roma 1,Milano,20100,MI,12345678901
+CLI0002,LEVONI,LEVONI SPA,Via Verdi 2,Verona,37100,VR,12345678902
+
+=== ANA_COLLABORATORI ===
+ID_COLLABORATORE,Collaboratore,Email,PWD,Ruolo,PIVA
+CONS001,Alessandro Vaglio,avaglio@vaglioandpartners.com,Boss01,Manager,
+CONS002,Paola Vaglio,pvaglio@vaglioandpartners.com,Boss02,Amministrazione,
+

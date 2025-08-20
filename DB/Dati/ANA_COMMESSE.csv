@@ -1,0 +1,16 @@
+ID_COMMESSA;Commessa;Desc_Commessa;Tipo_Commessa;ID_CLIENTE;Commissione;ID_COLLABORATORE;Data_Apertura_Commessa;Stato_Commessa;Documento_Offerta;Documento_Ordine;Data_Creazione;ID_UTENTE_CREAZIONE;Data_Modifica;ID_UTENTE_MODIFICA
+COM0001;CALVI SVIL MANAGERIALITA';Sviluppo Manageriale;Cliente;CLI0003; 0,27 ;CONS001;01/12/24;In corso;;;;;;
+COM0002;IK SVILUPPO;Analisi Organizzativa e progetti;Cliente;CLI0005; 0,27 ;CONS001;01/12/24;Chiusa;;;;;;
+COM0003;MANTUA;Supporto Sviluppo;Cliente;CLI0006; 0,27 ;CONS001;01/12/24;In corso;;;;;;
+COM0004;ITALPIZZA;Sviluppo Manageriale;Cliente;CLI0007; 0,27 ;CONS001;01/12/24;In corso;;;;;;
+COM0005;PERFETTI SVILUPPO;Sviluppo Organizzativo e Formazione;Cliente;CLI0016; 0,27 ;CONS001;01/12/24;In corso;;;;;;
+COM0006;LAVAZZA ENG;Supporto Sviluppo;Cliente;CLI0013; 0,27 ;CONS001;01/12/24;In corso;;;;;;
+COM0007;LAVAZZA SETTIMO;Supporto Sviluppo;Cliente;CLI0013; 0,27 ;CONS001;01/03/25;Chiusa;;;;;;
+COM0008;LAVAZZA HSE;Supporto Sviluppo;Cliente;CLI0013; 0,27 ;CONS001;01/07/25;In corso;;;;;;
+COM0009;LACTALIS LTF;Formazione LTF;Cliente;CLI0009; 0,27 ;CONS001;01/12/24;In corso;;;;;;
+COM0010;LACTALIS GALBANI;Coaching;Cliente;CLI0011; 0,27 ;CONS001;01/01/25;In corso;;;;;;
+COM0011;LACTALIS AMBROSI;Coaching;Cliente;CLI0010; 0,27 ;CONS001;01/05/25;In corso;;;;;;
+COM0012;LACTALIS NUOVA CASTELLI;Formazione Capi;Cliente;CLI0012; 0,27 ;CONS001;31/05/25;In corso;;;;;;
+COM0013;LACTALIS CORTEOLONA;Formazione Capi;Cliente;CLI0012; 0,27 ;CONS001;01/06/25;In corso;;;;;;
+COM0014;LINDT CAPI;Sviluppo organizzazione e formazione Capi;Cliente;CLI0014; 0,27 ;CONS001;01/04/25;In corso;;;;;;
+COM0015;SAMMONTANA FRANCIA;Assessment Man Prog. Ceres;Cliente;CLI0017; 0,27 ;CONS003;01/07/25;Chiusa;;;;;;

@@ -1,0 +1,6 @@
+ID_COLLABORATORE;Collaboratore;Email;PWD;Ruolo;PIVA;Data_Creazione;ID_UTENTE_CREAZIONE;Data_Modifica;ID_UTENTE_MODIFICA
+CONS001;Alessandro Vaglio;avaglio@vaglioandpartners.com;Boss01;Manager;;;;;
+CONS002;Giorgio Bevilacqua;gbevilacqua@vaglioandpartners.com;CeoCeo02;User;;;;;
+CONS003;Giorgio Troni;gtroni@vaglioandpartners.com;Partner1963;Admin;;;;;
+CONS004;Stefano Colombo;scolombo@vaglioandpartners.com;Gattina1963;User;;;;;
+CONS005;Francesco Silvestri;fsilverstri@vaglioandpartners.com;Analista00;User;;;;;
