@@ -31,15 +31,42 @@ if ($requireAuth) {
 
 // Configurazione percorsi
 $logsDir = __DIR__ . '/logs';
-$logFiles = [
-    'php_errors.log' => 'Errori PHP',
-    'api_access.log' => 'Accessi API',
-    'database.log' => 'Database',
-    'security.log' => 'Sicurezza'
-];
+
+// Ottieni lista dinamica dei file di log
+$logFiles = [];
+if (is_dir($logsDir)) {
+    $files = scandir($logsDir);
+    foreach ($files as $file) {
+        if ($file !== '.' && $file !== '..' && pathinfo($file, PATHINFO_EXTENSION) === 'log') {
+            // Crea descrizione basata sul nome del file
+            if (strpos($file, 'import_') === 0) {
+                $logFiles[$file] = 'Import CSV - ' . substr($file, 7, 10);
+            } elseif ($file === 'php_errors.log') {
+                $logFiles[$file] = 'Errori PHP';
+            } elseif ($file === 'api_access.log') {
+                $logFiles[$file] = 'Accessi API';
+            } elseif ($file === 'database.log') {
+                $logFiles[$file] = 'Database';
+            } elseif ($file === 'security.log') {
+                $logFiles[$file] = 'Sicurezza';
+            } else {
+                $logFiles[$file] = ucfirst(pathinfo($file, PATHINFO_FILENAME));
+            }
+        }
+    }
+}
+
+// Se non ci sono file, aggiungi almeno php_errors.log
+if (empty($logFiles)) {
+    $logFiles = ['php_errors.log' => 'Errori PHP'];
+}
 
 // Parametri dalla richiesta
-$selectedFile = $_GET['file'] ?? 'php_errors.log';
+$selectedFile = $_GET['file'] ?? '';
+// Se il file selezionato non esiste, prendi il primo disponibile
+if (!$selectedFile || !isset($logFiles[$selectedFile])) {
+    $selectedFile = array_keys($logFiles)[0] ?? 'php_errors.log';
+}
 $lines = (int)($_GET['lines'] ?? 50);
 $search = $_GET['search'] ?? '';
 $level = $_GET['level'] ?? '';
@@ -125,30 +152,43 @@ function getLogContent($filename, $lines, $search = '', $level = '') {
     $filepath = $logsDir . '/' . $filename;
     
     if (!file_exists($filepath)) {
-        return ['content' => "File di log non trovato: $filename", 'total_lines' => 0, 'file_size' => 0];
+        return ['content' => "File di log non trovato: $filename\nPercorso: $filepath", 'total_lines' => 0, 'file_size' => 0];
     }
     
     $fileSize = filesize($filepath);
-    $totalLines = 0;
     
-    // Leggi le ultime N righe
-    $content = shell_exec("tail -n $lines " . escapeshellarg($filepath));
-    if ($content === null) {
-        // Fallback per sistemi senza tail
-        $allContent = file_get_contents($filepath);
-        $allLines = explode("\n", $allContent);
-        $totalLines = count($allLines);
-        $content = implode("\n", array_slice($allLines, -$lines));
-    } else {
-        $totalLines = (int)shell_exec("wc -l < " . escapeshellarg($filepath));
+    // Controllo dimensione file (max 10MB per sicurezza)
+    if ($fileSize > 10 * 1024 * 1024) {
+        return ['content' => "File troppo grande (" . formatBytes($fileSize) . "). Usa il download per file > 10MB.", 'total_lines' => 0, 'file_size' => $fileSize];
     }
     
-    // Applica filtri
+    // Leggi tutto il contenuto
+    $allContent = @file_get_contents($filepath);
+    if ($allContent === false) {
+        return ['content' => "Errore nella lettura del file: $filename\nVerifica i permessi del file.", 'total_lines' => 0, 'file_size' => $fileSize];
+    }
+    
+    // Gestisci file vuoti
+    if (empty($allContent)) {
+        return ['content' => "File di log vuoto.", 'total_lines' => 0, 'file_size' => $fileSize];
+    }
+    
+    $allLines = explode("\n", $allContent);
+    $totalLines = count($allLines);
+    
+    // Prendi le ultime N righe (escludendo righe vuote alla fine)
+    $allLines = array_filter($allLines, function($line) {
+        return trim($line) !== '';
+    });
+    $allLines = array_values($allLines); // Reindexing
+    
+    $contentLines = array_slice($allLines, -$lines);
+    
+    // Applica filtri se specificati
     if ($search || $level) {
         $filteredLines = [];
-        $lines = explode("\n", $content);
         
-        foreach ($lines as $line) {
+        foreach ($contentLines as $line) {
             $include = true;
             
             if ($search && stripos($line, $search) === false) {
@@ -159,13 +199,15 @@ function getLogContent($filename, $lines, $search = '', $level = '') {
                 $include = false;
             }
             
-            if ($include && trim($line)) {
+            if ($include) {
                 $filteredLines[] = $line;
             }
         }
         
-        $content = implode("\n", $filteredLines);
+        $contentLines = $filteredLines;
     }
+    
+    $content = implode("\n", $contentLines);
     
     return [
         'content' => $content,
