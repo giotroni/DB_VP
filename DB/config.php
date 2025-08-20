@@ -22,11 +22,21 @@ class DatabaseConnection {
             $options = [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false,
-                PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4"
+                PDO::ATTR_EMULATE_PREPARES => false
             ];
             
+            // Aggiungi opzione MySQL solo se disponibile
+            if (defined('PDO::MYSQL_ATTR_INIT_COMMAND')) {
+                $options[PDO::MYSQL_ATTR_INIT_COMMAND] = "SET NAMES utf8mb4";
+            }
+            
             $this->connection = new PDO($dsn, DB_USER, DB_PASS, $options);
+            
+            // Imposta charset come query separata se l'opzione non è disponibile
+            if (!defined('PDO::MYSQL_ATTR_INIT_COMMAND')) {
+                $this->connection->exec("SET NAMES utf8mb4");
+            }
+            
         } catch(PDOException $e) {
             die("Errore di connessione al database: " . $e->getMessage());
         }

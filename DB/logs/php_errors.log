@@ -1,0 +1,8 @@
+[20-Aug-2025 10:40:06 Europe/Rome] PHP Fatal error:  Uncaught Error: Undefined constant PDO::MYSQL_ATTR_INIT_COMMAND in C:\onedrive_vep\OneDrive\Documents\40. KNOWHOW\VP\Gestionale\DB_VP\DB\config.php:26
+Stack trace:
+#0 C:\onedrive_vep\OneDrive\Documents\40. KNOWHOW\VP\Gestionale\DB_VP\DB\config.php(37): DatabaseConnection->__construct()
+#1 C:\onedrive_vep\OneDrive\Documents\40. KNOWHOW\VP\Gestionale\DB_VP\DB\config.php(59): DatabaseConnection::getInstance()
+#2 C:\onedrive_vep\OneDrive\Documents\40. KNOWHOW\VP\Gestionale\DB_VP\DB\import_csv.php(48): getDatabase()
+#3 C:\onedrive_vep\OneDrive\Documents\40. KNOWHOW\VP\Gestionale\DB_VP\DB\import_csv.php(713): CSVImporter->__construct()
+#4 {main}
+  thrown in C:\onedrive_vep\OneDrive\Documents\40. KNOWHOW\VP\Gestionale\DB_VP\DB\config.php on line 26

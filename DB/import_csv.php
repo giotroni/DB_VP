@@ -1,1054 +1,986 @@
 <?php
 /**
- * Import CSV - Importazione dati da file CSV
- * Legge file CSV dalla cartella /Dati e li importa nel database
- * Ogni tabella ha il proprio file CSV: ANA_CLIENTI.csv, ANA_COLLABORATORI.csv, etc.
+ * Importazione CSV - Importa tutti i file CSV nella cartella Dati
+ * 
+ * Questo script importa i file CSV nella sequenza corretta rispettando
+ * le dipendenze delle foreign key tra le tabelle.
+ * 
+ * Sequenza di importazione:
+ * 1. ANA_CLIENTI (tabella principale)
+ * 2. ANA_COLLABORATORI (tabella principale)
+ * 3. ANA_COMMESSE (dipende da CLIENTI)
+ * 4. ANA_TASK (dipende da COMMESSE)
+ * 5. ANA_TARIFFE_COLLABORATORI (dipende da COLLABORATORI)
+ * 6. FACT_GIORNATE (dipende da COLLABORATORI, COMMESSE, TASK)
+ * 7. FACT_FATTURE (dipende da CLIENTI, COMMESSE)
  */
 
 require_once 'config.php';
 
 class CSVImporter {
     private $db;
-    private $supportedTables;
-    private $fieldMappings;
-    private $stats;
     private $dataDir;
+    private $logFile;
+    
+    // Sequenza di importazione rispettando le dipendenze
+    private $importSequence = [
+        'ANA_CLIENTI',
+        'ANA_COLLABORATORI', 
+        'ANA_COMMESSE',
+        'ANA_TASK',
+        'ANA_TARIFFE_COLLABORATORI',
+        'FACT_GIORNATE',
+        'FACT_FATTURE'
+    ];
+    
+    // Mapping nomi file CSV -> nomi tabelle
+    private $tableMapping = [
+        'ANA_CLIENTI.csv' => 'ANA_CLIENTI',
+        'ANA_COLLABORATORI.csv' => 'ANA_COLLABORATORI',
+        'ANA_COMMESSE.csv' => 'ANA_COMMESSE', 
+        'ANA_TASK.csv' => 'ANA_TASK',
+        'ANA_TARIFFE_COLLABORATORI.csv' => 'ANA_TARIFFE_COLLABORATORI',
+        'FACT_GIORNATE.csv' => 'FACT_GIORNATE',
+        'FACT_FATTURE.csv' => 'FACT_FATTURE'
+    ];
+    
+    // Mapping per correggere nomi colonne problematiche
+    private $columnMapping = [
+        'FACT_GIORNATE' => [
+            'Spese_Viaggi' => 'Spese_Viaggi',
+            'Vitto__alloggio' => 'Vitto_alloggio', 
+            'Altri_costi' => 'Altri_costi'
+        ]
+    ];
+    
+    // Tabelle con campi auto-increment che possono essere vuoti
+    private $autoIncrementTables = [
+        'FACT_FATTURE' => 'ID_FATTURA'
+    ];
     
     public function __construct() {
         $this->db = getDatabase();
-        $this->initializeConfiguration();
-        $this->stats = [
-            'processed' => 0,
-            'inserted' => 0,
-            'updated' => 0,
-            'errors' => 0,
-            'skipped' => 0
-        ];
-        
-        // Directory dati CSV
         $this->dataDir = __DIR__ . '/Dati';
-        if (!file_exists($this->dataDir)) {
-            mkdir($this->dataDir, 0755, true);
+        $this->logFile = __DIR__ . '/logs/import_' . date('Y-m-d_H-i-s') . '.log';
+        
+        if (!is_dir($this->dataDir)) {
+            throw new Exception("Cartella Dati non trovata: " . $this->dataDir);
         }
     }
     
     /**
-     * Inizializza la configurazione delle tabelle supportate
+     * Avvia il processo di importazione
      */
-    private function initializeConfiguration() {
-        $this->supportedTables = [
-            'ANA_CLIENTI',
-            'ANA_COLLABORATORI', 
-            'ANA_COMMESSE',
-            'ANA_TASK',
-            'ANA_TARIFFE_COLLABORATORI',
-            'FACT_GIORNATE',
-            'FACT_FATTURE'
-        ];
+    public function run() {
+        $this->log("=== INIZIO IMPORTAZIONE CSV ===");
+        $this->log("Data/Ora: " . date('Y-m-d H:i:s'));
+        $this->log("Cartella dati: " . $this->dataDir);
         
-        // Mappatura campi speciali per ogni tabella
-        $this->fieldMappings = [
-            'ANA_COLLABORATORI' => [
-                'PWD' => 'password_hash'
-            ],
-            'FACT_GIORNATE' => [
-                'Desk' => 'enum_fix',
-                'Tipo' => 'enum_fix'
-            ],
-            'FACT_FATTURE' => [
-                'Data_Ordine' => 'date_fix',
-                'Data_Pagamento' => 'date_fix'
-            ]
-        ];
-    }
-    
-    /**
-     * Scansiona la directory Dati per file CSV disponibili
-     */
-    public function scanCSVFiles() {
-        $availableFiles = [];
-        $missingFiles = [];
-        
-        foreach ($this->supportedTables as $tableName) {
-            $csvFile = $this->dataDir . '/' . $tableName . '.csv';
-            if (file_exists($csvFile)) {
-                $availableFiles[$tableName] = [
-                    'file' => $csvFile,
-                    'size' => filesize($csvFile),
-                    'modified' => filemtime($csvFile),
-                    'rows' => $this->countCSVRows($csvFile)
-                ];
+        try {
+            // Chiedi conferma per svuotare le tabelle
+            $this->askTruncateConfirmation();
+            
+            // Verifica presenza file CSV
+            $this->checkCSVFiles();
+            
+            // Importa i file nella sequenza corretta
+            $this->importAllCSV();
+            
+            $this->log("=== IMPORTAZIONE COMPLETATA CON SUCCESSO ===");
+            if (php_sapi_name() === 'cli') {
+                echo "\n✅ Importazione completata con successo!\n";
+                echo "📄 Log salvato in: " . $this->logFile . "\n";
             } else {
-                $missingFiles[] = $tableName;
-            }
-        }
-        
-        return [
-            'available' => $availableFiles,
-            'missing' => $missingFiles
-        ];
-    }
-    
-    /**
-     * Conta le righe in un file CSV
-     */
-    private function countCSVRows($filename) {
-        $count = 0;
-        if (($handle = fopen($filename, 'r')) !== FALSE) {
-            while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
-                $count++;
-            }
-            fclose($handle);
-        }
-        return max(0, $count - 1); // -1 per escludere header
-    }
-    
-    /**
-     * Importa tutti i file CSV disponibili
-     */
-    public function importAllCSV($options = []) {
-        echo "<div class='import-section'>";
-        echo "<h3>📂 Importazione da file CSV</h3>";
-        
-        $scanResult = $this->scanCSVFiles();
-        $availableFiles = $scanResult['available'];
-        $missingFiles = $scanResult['missing'];
-        
-        if (empty($availableFiles)) {
-            echo "<div class='alert error'>❌ Nessun file CSV trovato nella cartella /Dati</div>";
-            echo "</div>";
-            return $this->stats;
-        }
-        
-        // Mostra file disponibili
-        echo "<div class='log-entry'>📁 File CSV trovati: " . count($availableFiles) . "</div>";
-        foreach ($availableFiles as $table => $info) {
-            echo "<div class='log-entry'>  ✅ {$table}.csv - {$info['rows']} righe (" . $this->formatBytes($info['size']) . ")</div>";
-        }
-        
-        if (!empty($missingFiles)) {
-            echo "<div class='log-entry warning'>⚠️ File mancanti: " . implode(', ', $missingFiles) . "</div>";
-        }
-        
-        // Ordine di importazione (rispetta foreign key)
-        $importOrder = [
-            'ANA_CLIENTI',
-            'ANA_COLLABORATORI',
-            'ANA_COMMESSE', 
-            'ANA_TASK',
-            'ANA_TARIFFE_COLLABORATORI',
-            'FACT_GIORNATE',
-            'FACT_FATTURE'
-        ];
-        
-        $mode = $options['mode'] ?? 'insert';
-        $truncate = $options['truncate'] ?? false;
-        
-        foreach ($importOrder as $tableName) {
-            if (isset($availableFiles[$tableName])) {
-                echo "<div class='table-section'>";
-                echo "<h4>📊 Importazione $tableName</h4>";
-                
-                if ($truncate) {
-                    $this->truncateTable($tableName);
-                }
-                
-                $this->importCSVFile($tableName, $availableFiles[$tableName]['file'], $mode);
+                echo "<div style='background-color: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 5px;'>";
+                echo "<h3>✅ Importazione completata con successo!</h3>";
+                echo "<p>📄 Log salvato in: " . basename($this->logFile) . "</p>";
                 echo "</div>";
             }
+            
+        } catch (Exception $e) {
+            $this->log("ERRORE FATALE: " . $e->getMessage());
+            if (php_sapi_name() === 'cli') {
+                echo "\n❌ Errore durante l'importazione: " . $e->getMessage() . "\n";
+                echo "📄 Controlla il log: " . $this->logFile . "\n";
+            } else {
+                echo "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; margin: 10px 0; border-radius: 5px;'>";
+                echo "<h3>❌ Errore durante l'importazione</h3>";
+                echo "<p><strong>Errore:</strong> " . $e->getMessage() . "</p>";
+                echo "<p>📄 Controlla il log: " . basename($this->logFile) . "</p>";
+                echo "</div>";
+            }
+            throw $e;
         }
-        
-        $this->showFinalStats();
-        echo "</div>";
-        return $this->stats;
     }
     
     /**
-     * Importa un singolo file CSV con validazione headers
+     * Chiede conferma per svuotare le tabelle
      */
-    private function importCSVFile($tableName, $csvFile, $mode) {
-        echo "<div class='log-entry'>📄 Lettura file: " . basename($csvFile) . "</div>";
+    private function askTruncateConfirmation() {
+        // Verifica se stiamo eseguendo da CLI o da web
+        $isCLI = php_sapi_name() === 'cli';
         
-        // Leggi CSV
-        $csvData = $this->readCSV($csvFile);
-        if (empty($csvData)) {
-            echo "<div class='log-entry error'>❌ File CSV vuoto o non leggibile</div>";
-            return;
+        if (!$isCLI) {
+            echo "<h2>🗂️ IMPORTAZIONE DATI CSV</h2>";
+            echo "<hr>";
+        } else {
+            echo "\n🗂️  IMPORTAZIONE DATI CSV\n";
+            echo "=========================\n\n";
         }
         
-        $headers = $csvData['headers'];
-        $rows = $csvData['data'];
+        // Mostra tabelle esistenti e conta record
+        $this->showCurrentData();
         
-        // Valida headers
-        $validationResult = $this->validateCSVHeaders($tableName, $headers);
-        if (!$validationResult['valid']) {
-            echo "<div class='log-entry error'>❌ Headers non validi: " . $validationResult['message'] . "</div>";
-            return;
+        if ($isCLI) {
+            // Modalità CLI - input interattivo
+            $this->askTruncateConfirmationCLI();
+        } else {
+            // Modalità WEB - usa parametri GET
+            $this->askTruncateConfirmationWEB();
+        }
+    }
+    
+    /**
+     * Gestione conferma per ambiente CLI
+     */
+    private function askTruncateConfirmationCLI() {
+        echo "\nVuoi svuotare tutte le tabelle prima dell'importazione?\n";
+        echo "(Questo cancellerà tutti i dati esistenti nelle tabelle)\n";
+        echo "\n[S]i - Svuota tutte le tabelle\n";
+        echo "[N]o - Mantieni dati esistenti (potrebbero verificarsi errori di duplicazione)\n";
+        echo "[C]ancella - Annulla operazione\n\n";
+        
+        $choice = '';
+        while (!in_array(strtoupper($choice), ['S', 'N', 'C'])) {
+            echo "Scelta (S/N/C): ";
+            $choice = trim(fgets(STDIN));
         }
         
-        echo "<div class='log-entry success'>✅ Headers validati correttamente</div>";
-        echo "<div class='log-entry'>Colonne: " . implode(', ', $headers) . "</div>";
-        echo "<div class='log-entry'>Righe da processare: " . count($rows) . "</div>";
+        $this->processChoice(strtoupper($choice));
+    }
+    
+    /**
+     * Gestione conferma per ambiente WEB
+     */
+    private function askTruncateConfirmationWEB() {
+        // Controlla se è stato passato un parametro di scelta
+        $choice = isset($_GET['action']) ? strtoupper($_GET['action']) : '';
         
-        // Prepara la query SQL
-        $sql = $this->buildInsertSQL($tableName, $headers, $mode);
-        $stmt = $this->db->prepare($sql);
+        if (empty($choice) || !in_array($choice, ['S', 'N', 'C'])) {
+            // Mostra i pulsanti per la scelta
+            echo "<br><h3>Vuoi svuotare tutte le tabelle prima dell'importazione?</h3>";
+            echo "<p><strong>Attenzione:</strong> Questo cancellerà tutti i dati esistenti nelle tabelle</p>";
+            
+            $currentUrl = $_SERVER['PHP_SELF'];
+            
+            echo "<div style='margin: 20px 0;'>";
+            echo "<a href='$currentUrl?action=S' style='background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; margin-right: 10px; border-radius: 5px;'>
+                    ✅ SÌ - Svuota tutte le tabelle</a>";
+            echo "<a href='$currentUrl?action=N' style='background-color: #ffc107; color: black; padding: 10px 20px; text-decoration: none; margin-right: 10px; border-radius: 5px;'>
+                    ⚠️ NO - Mantieni dati esistenti</a>";
+            echo "<a href='$currentUrl' style='background-color: #6c757d; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>
+                    ❌ CANCELLA - Annulla operazione</a>";
+            echo "</div>";
+            
+            echo "<p><em>Clicca su una delle opzioni per procedere.</em></p>";
+            exit(0);
+        }
         
-        $tableStats = ['processed' => 0, 'inserted' => 0, 'updated' => 0, 'errors' => 0, 'skipped' => 0];
-        
-        echo "<div class='progress-container'>";
-        echo "<div class='progress-bar' id='progress-{$tableName}'></div>";
-        echo "</div>";
-        
-        foreach ($rows as $rowIndex => $row) {
-            $tableStats['processed']++;
-            $this->stats['processed']++;
-            
-            // Aggiorna progress bar
-            $progress = round(($rowIndex + 1) / count($rows) * 100);
-            echo "<script>
-                const progressBar = document.getElementById('progress-{$tableName}');
-                if (progressBar) progressBar.style.width = '{$progress}%';
-            </script>";
-            
-            // Forza output immediato
-            if (ob_get_level()) ob_flush();
-            flush();
-            
-            // Salta righe vuote
-            if ($this->isEmptyRow($row)) {
-                $tableStats['skipped']++;
-                $this->stats['skipped']++;
-                continue;
-            }
-            
-            try {
-                // Processa i dati della riga
-                $processedRow = $this->processRowData($tableName, $headers, $row);
+        $this->processChoice($choice);
+    }
+    
+    /**
+     * Processa la scelta dell'utente
+     */
+    private function processChoice($choice) {
+        switch ($choice) {
+            case 'S':
+                $this->log("Utente ha scelto di svuotare le tabelle");
+                $this->truncateAllTables();
+                break;
                 
-                // Esegui l'inserimento/aggiornamento
-                if ($mode === 'upsert') {
-                    $result = $this->upsertRow($tableName, $headers, $processedRow);
-                    if ($result === 'inserted') {
-                        $tableStats['inserted']++;
-                        $this->stats['inserted']++;
-                    } else {
-                        $tableStats['updated']++;
-                        $this->stats['updated']++;
-                    }
+            case 'N':
+                $this->log("Utente ha scelto di mantenere i dati esistenti");
+                if (php_sapi_name() === 'cli') {
+                    echo "\n⚠️  Attenzione: I dati esistenti verranno mantenuti.\n";
+                    echo "   Potrebbero verificarsi errori di chiave duplicata.\n";
                 } else {
-                    $stmt->execute($processedRow);
-                    $tableStats['inserted']++;
-                    $this->stats['inserted']++;
+                    echo "<div style='background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 10px 0; border-radius: 5px;'>";
+                    echo "<strong>⚠️ Attenzione:</strong> I dati esistenti verranno mantenuti.<br>";
+                    echo "Potrebbero verificarsi errori di chiave duplicata.";
+                    echo "</div>";
+                }
+                break;
+                
+            case 'C':
+                $this->log("Utente ha annullato l'operazione");
+                if (php_sapi_name() === 'cli') {
+                    echo "\nOperazione annullata.\n";
+                } else {
+                    echo "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; margin: 10px 0; border-radius: 5px;'>";
+                    echo "<strong>❌ Operazione annullata.</strong>";
+                    echo "</div>";
+                }
+                exit(0);
+        }
+    }
+    
+    /**
+     * Mostra i dati attualmente presenti nelle tabelle
+     */
+    private function showCurrentData() {
+        $isCLI = php_sapi_name() === 'cli';
+        
+        if ($isCLI) {
+            echo "📊 STATO ATTUALE DELLE TABELLE:\n";
+            echo "================================\n";
+        } else {
+            echo "<h3>📊 STATO ATTUALE DELLE TABELLE:</h3>";
+            echo "<table style='border-collapse: collapse; width: 100%; margin: 15px 0;'>";
+            echo "<tr style='background-color: #f8f9fa;'>";
+            echo "<th style='border: 1px solid #ddd; padding: 12px; text-align: left;'>Tabella</th>";
+            echo "<th style='border: 1px solid #ddd; padding: 12px; text-align: right;'>Record</th>";
+            echo "</tr>";
+        }
+        
+        foreach ($this->importSequence as $tableName) {
+            try {
+                $stmt = $this->db->prepare("SELECT COUNT(*) as count FROM `$tableName`");
+                $stmt->execute();
+                $count = $stmt->fetch()['count'];
+                
+                if ($isCLI) {
+                    echo sprintf("%-25s: %d record\n", $tableName, $count);
+                } else {
+                    $color = $count > 0 ? '#28a745' : '#6c757d';
+                    echo "<tr>";
+                    echo "<td style='border: 1px solid #ddd; padding: 8px;'>$tableName</td>";
+                    echo "<td style='border: 1px solid #ddd; padding: 8px; text-align: right; color: $color; font-weight: bold;'>$count record</td>";
+                    echo "</tr>";
                 }
                 
             } catch (PDOException $e) {
-                $tableStats['errors']++;
-                $this->stats['errors']++;
-                
-                // Log errore solo se non è un duplicato in modalità insert
-                if ($e->getCode() != 23000 || $mode !== 'insert') {
-                    echo "<div class='log-entry error'>❌ Errore riga " . ($rowIndex + 1) . ": " . htmlspecialchars($e->getMessage()) . "</div>";
+                if ($e->getCode() == '42S02') { // Table doesn't exist
+                    if ($isCLI) {
+                        echo sprintf("%-25s: Tabella non esistente\n", $tableName);
+                    } else {
+                        echo "<tr>";
+                        echo "<td style='border: 1px solid #ddd; padding: 8px;'>$tableName</td>";
+                        echo "<td style='border: 1px solid #ddd; padding: 8px; text-align: right; color: #dc3545;'>Tabella non esistente</td>";
+                        echo "</tr>";
+                    }
+                } else {
+                    if ($isCLI) {
+                        echo sprintf("%-25s: Errore (%s)\n", $tableName, $e->getMessage());
+                    } else {
+                        echo "<tr>";
+                        echo "<td style='border: 1px solid #ddd; padding: 8px;'>$tableName</td>";
+                        echo "<td style='border: 1px solid #ddd; padding: 8px; text-align: right; color: #dc3545;'>Errore</td>";
+                        echo "</tr>";
+                    }
                 }
             }
         }
         
-        echo "<div class='table-stats'>";
-        echo "✅ Processate: <strong>{$tableStats['processed']}</strong>, ";
-        echo "Inserite: <strong>{$tableStats['inserted']}</strong>, ";
-        echo "Aggiornate: <strong>{$tableStats['updated']}</strong>, ";
-        echo "Errori: <strong>{$tableStats['errors']}</strong>, ";
-        echo "Saltate: <strong>{$tableStats['skipped']}</strong>";
-        echo "</div>";
+        if (!$isCLI) {
+            echo "</table>";
+        }
     }
     
     /**
-     * Valida gli headers del CSV contro la struttura della tabella
+     * Svuota tutte le tabelle nella sequenza inversa
      */
-    private function validateCSVHeaders($tableName, $headers) {
-        $expectedHeaders = $this->getTableHeaders($tableName);
+    private function truncateAllTables() {
+        $isCLI = php_sapi_name() === 'cli';
         
-        if (empty($expectedHeaders)) {
-            return ['valid' => false, 'message' => "Tabella $tableName non supportata"];
+        if ($isCLI) {
+            echo "\n🗑️  Svuotamento tabelle in corso...\n";
+        } else {
+            echo "<h3>🗑️ Svuotamento tabelle in corso...</h3>";
+            echo "<div style='background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0;'>";
         }
         
-        // Controlla che almeno la chiave primaria sia presente
-        $primaryKey = $expectedHeaders[0];
-        if (!in_array($primaryKey, $headers)) {
-            return ['valid' => false, 'message' => "Chiave primaria '$primaryKey' mancante"];
-        }
+        // Disabilita controlli foreign key temporaneamente
+        $this->db->exec("SET foreign_key_checks = 0");
         
-        // Avviso per colonne mancanti (non bloccante)
-        $missingHeaders = array_diff($expectedHeaders, $headers);
-        if (!empty($missingHeaders)) {
-            echo "<div class='log-entry warning'>⚠️ Colonne mancanti (verranno usati valori di default): " . implode(', ', $missingHeaders) . "</div>";
-        }
+        // Svuota in ordine inverso per rispettare le dipendenze
+        $reversedSequence = array_reverse($this->importSequence);
         
-        // Avviso per colonne extra (non bloccante)
-        $extraHeaders = array_diff($headers, $expectedHeaders);
-        if (!empty($extraHeaders)) {
-            echo "<div class='log-entry warning'>⚠️ Colonne extra (verranno ignorate): " . implode(', ', $extraHeaders) . "</div>";
-        }
-        
-        return ['valid' => true, 'message' => 'Headers validi'];
-    }
-    
-    /**
-     * Ottiene gli header attesi per una tabella
-     */
-    private function getTableHeaders($tableName) {
-        $headers = [
-            'ANA_CLIENTI' => ['ID_CLIENTE', 'Cliente', 'Denominazione_Sociale', 'Indirizzo', 'Citta', 'CAP', 'Provincia', 'P_IVA'],
-            'ANA_COLLABORATORI' => ['ID_COLLABORATORE', 'Collaboratore', 'Email', 'PWD', 'Ruolo', 'PIVA'],
-            'ANA_COMMESSE' => ['ID_COMMESSA', 'Commessa', 'Desc_Commessa', 'Tipo_Commessa', 'ID_CLIENTE', 'Commissione', 'ID_COLLABORATORE', 'Data_Apertura_Commessa', 'Stato_Commessa'],
-            'ANA_TASK' => ['ID_TASK', 'Task', 'Desc_Task', 'ID_COMMESSA', 'ID_COLLABORATORE', 'Tipo', 'Data_Apertura_Task', 'Stato_Task', 'gg_previste', 'Spese_Comprese', 'Valore_Spese_std', 'Valore_gg'],
-            'ANA_TARIFFE_COLLABORATORI' => ['ID_TARIFFA', 'ID_COLLABORATORE', 'ID_COMMESSA', 'Tariffa_gg', 'Spese_comprese', 'Dal'],
-            'FACT_GIORNATE' => ['ID_GIORNATA', 'Data', 'ID_COLLABORATORE', 'ID_TASK', 'Tipo', 'Desk', 'gg', 'Spese_Viaggi', 'Vitto_alloggio', 'Altri_costi', 'Note'],
-            'FACT_FATTURE' => ['ID_FATTURA', 'Data', 'ID_CLIENTE', 'TIPO', 'NR', 'ID_COMMESSA', 'Fatturato_gg', 'Fatturato_Spese', 'Fatturato_TOT', 'Note', 'Riferimento_Ordine', 'Data_Ordine', 'Tempi_Pagamento', 'Scadenza_Pagamento', 'Data_Pagamento', 'Valore_Pagato']
-        ];
-        
-        return $headers[$tableName] ?? [];
-    }
-    
-    /**
-     * Legge un file CSV con rilevamento automatico del separatore
-     */
-    private function readCSV($filename) {
-        $data = [];
-        $headers = [];
-        
-        if (($handle = fopen($filename, 'r')) !== FALSE) {
-            // Leggi la prima riga per rilevare il separatore
-            $firstLine = fgets($handle);
-            rewind($handle);
-            
-            // Rileva separatore automaticamente
-            $separator = $this->detectCSVSeparator($firstLine);
-            echo "<div class='log-entry'>Separatore rilevato: '<strong>$separator</strong>'</div>";
-            
-            // Prima riga = headers
-            if (($headerRow = fgetcsv($handle, 0, $separator)) !== FALSE) {
-                $headers = array_map('trim', $headerRow);
-                
-                // Rimuovi eventuali BOM UTF-8
-                if (!empty($headers[0])) {
-                    $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
+        foreach ($reversedSequence as $tableName) {
+            try {
+                $this->db->exec("TRUNCATE TABLE `$tableName`");
+                if ($isCLI) {
+                    echo "   ✅ $tableName svuotata\n";
+                } else {
+                    echo "✅ $tableName svuotata<br>";
                 }
+                $this->log("Tabella $tableName svuotata");
                 
-                echo "<div class='log-entry'>Headers trovati: " . implode(', ', $headers) . "</div>";
-            }
-            
-            // Righe dati
-            while (($row = fgetcsv($handle, 0, $separator)) !== FALSE) {
-                if (!$this->isEmptyRow($row)) {
-                    // Pulisci i dati
-                    $row = array_map('trim', $row);
-                    
-                    // Assicurati che il numero di colonne corrisponda agli headers
-                    $row = array_pad($row, count($headers), '');
-                    $data[] = array_slice($row, 0, count($headers));
+            } catch (PDOException $e) {
+                if ($e->getCode() == '42S02') {
+                    if ($isCLI) {
+                        echo "   ⚠️  $tableName non esiste\n";
+                    } else {
+                        echo "⚠️ $tableName non esiste<br>";
+                    }
+                    $this->log("Tabella $tableName non esiste, saltata");
+                } else {
+                    if ($isCLI) {
+                        echo "   ❌ Errore svuotando $tableName: " . $e->getMessage() . "\n";
+                    } else {
+                        echo "❌ Errore svuotando $tableName: " . $e->getMessage() . "<br>";
+                    }
+                    $this->log("Errore svuotando $tableName: " . $e->getMessage());
                 }
             }
+        }
+        
+        // Riabilita controlli foreign key
+        $this->db->exec("SET foreign_key_checks = 1");
+        
+        if ($isCLI) {
+            echo "   Svuotamento completato.\n";
+        } else {
+            echo "</div>";
+            echo "<p><strong>Svuotamento completato.</strong></p>";
+        }
+    }
+    
+    /**
+     * Verifica la presenza di tutti i file CSV
+     */
+    private function checkCSVFiles() {
+        $isCLI = php_sapi_name() === 'cli';
+        
+        if ($isCLI) {
+            echo "\n📁 Verifica file CSV...\n";
+        } else {
+            echo "<h3>📁 Verifica file CSV...</h3>";
+            echo "<div style='background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0;'>";
+        }
+        
+        $missingFiles = [];
+        $availableFiles = [];
+        
+        foreach ($this->tableMapping as $csvFile => $tableName) {
+            $filePath = $this->dataDir . '/' . $csvFile;
             
+            if (file_exists($filePath)) {
+                $fileSize = filesize($filePath);
+                if ($isCLI) {
+                    echo "   ✅ $csvFile (". $this->formatBytes($fileSize) . ")\n";
+                } else {
+                    echo "✅ $csvFile (". $this->formatBytes($fileSize) . ")<br>";
+                }
+                $availableFiles[] = $csvFile;
+                $this->log("File trovato: $csvFile ($fileSize bytes)");
+            } else {
+                if ($isCLI) {
+                    echo "   ❌ $csvFile (NON TROVATO)\n";
+                } else {
+                    echo "❌ $csvFile (NON TROVATO)<br>";
+                }
+                $missingFiles[] = $csvFile;
+                $this->log("File mancante: $csvFile");
+            }
+        }
+        
+        if (!empty($missingFiles)) {
+            if (!$isCLI) {
+                echo "</div>";
+            }
+            throw new Exception("File CSV mancanti: " . implode(', ', $missingFiles));
+        }
+        
+        if ($isCLI) {
+            echo "   Tutti i file CSV sono presenti.\n";
+        } else {
+            echo "</div>";
+            echo "<p><strong>✅ Tutti i file CSV sono presenti.</strong></p>";
+        }
+    }
+    
+    /**
+     * Importa tutti i CSV nella sequenza corretta
+     */
+    private function importAllCSV() {
+        $isCLI = php_sapi_name() === 'cli';
+        
+        if ($isCLI) {
+            echo "\n📥 Importazione in corso...\n";
+        } else {
+            echo "<h3>📥 Importazione in corso...</h3>";
+            echo "<div style='background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0;'>";
+        }
+        
+        $totalImported = 0;
+        $totalErrors = 0;
+        
+        foreach ($this->importSequence as $tableName) {
+            $csvFile = array_search($tableName, $this->tableMapping);
+            
+            if ($csvFile === false) {
+                if ($isCLI) {
+                    echo "   ⚠️  Nessun file CSV per tabella $tableName\n";
+                } else {
+                    echo "⚠️ Nessun file CSV per tabella $tableName<br>";
+                }
+                continue;
+            }
+            
+            $filePath = $this->dataDir . '/' . $csvFile;
+            
+            if ($isCLI) {
+                echo "\n   📄 Importando $csvFile → $tableName...\n";
+            } else {
+                echo "<br><strong>📄 Importando $csvFile → $tableName...</strong><br>";
+            }
+            $this->log("Inizio importazione: $csvFile → $tableName");
+            
+            try {
+                $result = $this->importCSVFile($filePath, $tableName);
+                
+                if ($isCLI) {
+                    echo "✅ Importati <strong>{$result['imported']}</strong> record";
+                    if ($result['skipped'] > 0) {
+                        echo " ({$result['skipped']} saltati)";
+                    }
+                    if ($result['errors'] > 0) {
+                        echo " ({$result['errors']} errori)";
+                    }
+                    echo "\n";
+                } else {
+                    echo "✅ Importati <strong>{$result['imported']}</strong> record";
+                    if ($result['skipped'] > 0) {
+                        echo " (<span style='color: #ffc107;'>{$result['skipped']} saltati</span>)";
+                    }
+                    if ($result['errors'] > 0) {
+                        echo " (<span style='color: #dc3545;'>{$result['errors']} errori</span>)";
+                    }
+                    echo "<br>";
+                }
+                
+                $totalImported += $result['imported'];
+                $totalErrors += $result['errors'];
+                $totalSkipped = isset($result['skipped']) ? $result['skipped'] : 0;
+                
+                $this->log("Completata importazione $tableName: {$result['imported']} record importati, {$result['errors']} errori, $totalSkipped saltati");
+                
+            } catch (Exception $e) {
+                if ($isCLI) {
+                    echo "      ❌ Errore: " . $e->getMessage() . "\n";
+                } else {
+                    echo "<span style='color: #dc3545;'>❌ Errore: " . $e->getMessage() . "</span><br>";
+                }
+                $this->log("Errore importazione $tableName: " . $e->getMessage());
+                $totalErrors++;
+            }
+        }
+        
+        if ($isCLI) {
+            echo "\n📊 RIEPILOGO IMPORTAZIONE:\n";
+            echo "   Record importati: $totalImported\n";
+            echo "   Record saltati: $totalSkipped\n";
+            echo "   Errori totali: $totalErrors\n";
+        } else {
+            echo "</div>";
+            echo "<div style='background-color: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 5px;'>";
+            echo "<h4>📊 RIEPILOGO IMPORTAZIONE:</h4>";
+            echo "<strong>Record importati:</strong> $totalImported<br>";
+            echo "<strong>Record saltati:</strong> $totalSkipped<br>";
+            echo "<strong>Errori totali:</strong> $totalErrors";
+            echo "</div>";
+        }
+        
+        $this->log("RIEPILOGO: $totalImported record importati, $totalSkipped saltati, $totalErrors errori");
+    }
+    
+    /**
+     * Importa un singolo file CSV con gestione avanzata degli errori
+     */
+    private function importCSVFile($filePath, $tableName) {
+        $imported = 0;
+        $errors = 0;
+        $skipped = 0;
+        $lineNumber = 0;
+        
+        $this->log("=== INIZIO IMPORTAZIONE $tableName ===");
+        $this->log("File: $filePath");
+        
+        // Apri il file CSV
+        if (($handle = fopen($filePath, 'r')) === false) {
+            throw new Exception("Impossibile aprire il file: $filePath");
+        }
+        
+        // Leggi la prima riga (header)
+        $lineNumber++;
+        $headers = fgetcsv($handle, 0, ';');
+        
+        if ($headers === false) {
             fclose($handle);
+            throw new Exception("File CSV vuoto o non valido: $filePath");
         }
+        
+        // Rimuovi eventuali caratteri BOM e spazi
+        $originalHeaders = array_map(function($header) {
+            return trim(str_replace("\xEF\xBB\xBF", '', $header));
+        }, $headers);
+        
+        $headers = array_map(function($header) {
+            $cleaned = trim(str_replace("\xEF\xBB\xBF", '', $header));
+            // Rimuovi caratteri non validi dai nomi delle colonne per evitare errori SQL
+            $cleaned = preg_replace('/[^a-zA-Z0-9_]/', '_', $cleaned);
+            // Rimuovi underscore multipli consecutivi
+            $cleaned = preg_replace('/_+/', '_', $cleaned);
+            // Rimuovi underscore all'inizio e alla fine
+            $cleaned = trim($cleaned, '_');
+            return $cleaned;
+        }, $headers);
+        
+        // Rimuovi colonne vuote alla fine
+        while (!empty($headers) && empty(end($headers))) {
+            array_pop($headers);
+        }
+        
+        $this->log("Headers originali: " . implode(', ', $originalHeaders));
+        $this->log("Headers puliti: " . implode(', ', $headers));
+        $this->log("Numero di colonne header: " . count($headers));
+        
+        // Applica mapping colonne specifico per tabella se esiste
+        $finalHeaders = $headers;
+        if (isset($this->columnMapping[$tableName])) {
+            $mapping = $this->columnMapping[$tableName];
+            for ($i = 0; $i < count($finalHeaders); $i++) {
+                if (isset($mapping[$finalHeaders[$i]])) {
+                    $this->log("Mapping colonna: {$finalHeaders[$i]} → {$mapping[$finalHeaders[$i]]}");
+                    $finalHeaders[$i] = $mapping[$finalHeaders[$i]];
+                }
+            }
+        }
+        
+        // Gestione speciale per tabelle con auto-increment
+        $isAutoIncrementTable = isset($this->autoIncrementTables[$tableName]);
+        $autoIncrementField = $isAutoIncrementTable ? $this->autoIncrementTables[$tableName] : null;
+        
+        // Disabilita temporaneamente i controlli foreign key per questa importazione
+        $this->db->exec("SET foreign_key_checks = 0");
+        
+        // Per tabelle auto-increment, prepariamo due query: una con ID e una senza
+        if ($isAutoIncrementTable) {
+            // Query senza campo auto-increment
+            $headersWithoutAuto = array_filter($finalHeaders, function($header) use ($autoIncrementField) {
+                return $header !== $autoIncrementField;
+            });
+            $headersWithoutAuto = array_values($headersWithoutAuto);
+            
+            $placeholdersWithoutAuto = ':' . implode(', :', $headersWithoutAuto);
+            $columnsWithoutAuto = '`' . implode('`, `', $headersWithoutAuto) . '`';
+            $sqlWithoutAuto = "INSERT IGNORE INTO `$tableName` ($columnsWithoutAuto) VALUES ($placeholdersWithoutAuto)";
+            
+            // Query con campo auto-increment  
+            $placeholders = ':' . implode(', :', $finalHeaders);
+            $columns = '`' . implode('`, `', $finalHeaders) . '`';
+            $sqlWithAuto = "INSERT IGNORE INTO `$tableName` ($columns) VALUES ($placeholders)";
+            
+            $this->log("Query preparata (senza auto-increment): $sqlWithoutAuto");
+            $this->log("Query preparata (con auto-increment): $sqlWithAuto");
+            
+            $stmtWithoutAuto = $this->db->prepare($sqlWithoutAuto);
+            $stmtWithAuto = $this->db->prepare($sqlWithAuto);
+        } else {
+            // Query normale
+            $placeholders = ':' . implode(', :', $finalHeaders);
+            $columns = '`' . implode('`, `', $finalHeaders) . '`';
+            $sql = "INSERT IGNORE INTO `$tableName` ($columns) VALUES ($placeholders)";
+            
+            $this->log("Query preparata: $sql");
+            $stmt = $this->db->prepare($sql);
+        }
+        
+        // Conta il numero totale di righe per progresso
+        $totalLines = 0;
+        while (fgetcsv($handle, 0, ';') !== false) {
+            $totalLines++;
+        }
+        rewind($handle);
+        fgetcsv($handle, 0, ';'); // Ri-leggi header
+        
+        $this->log("Numero totale di righe dati da processare: $totalLines");
+        
+        // Processa ogni riga
+        while (($data = fgetcsv($handle, 0, ';')) !== false) {
+            $lineNumber++;
+            
+            // Log delle prime 3 righe per debug
+            if ($lineNumber <= 4) {
+                $this->log("Riga $lineNumber dati grezzi: " . implode(' | ', $data));
+                $this->log("Numero di campi riga $lineNumber: " . count($data));
+            }
+            
+            // Salta righe vuote
+            if (empty(array_filter($data, function($value) { return trim($value) !== ''; }))) {
+                $skipped++;
+                $this->log("Riga $lineNumber vuota, saltata");
+                continue;
+            }
+            
+            // Adatta il numero di colonne
+            $originalDataCount = count($data);
+            $data = array_pad($data, count($headers), '');
+            $data = array_slice($data, 0, count($headers));
+            
+            if ($originalDataCount != count($headers)) {
+                $this->log("Riga $lineNumber: regolato numero campi da $originalDataCount a " . count($headers));
+            }
+            
+            // Prepara i dati per l'inserimento
+            $params = [];
+            $paramsWithoutAuto = [];
+            $hasAutoIncrementValue = false;
+            
+            for ($i = 0; $i < count($headers); $i++) {
+                $value = trim($data[$i]);
+                
+                // Gestione speciale per campi data (formato italiano)
+                $isDateField = (
+                    strpos(strtolower($finalHeaders[$i]), 'data') !== false ||
+                    in_array(strtolower($finalHeaders[$i]), ['data', 'scadenza_pagamento', 'data_pagamento', 'data_ordine', 'data_apertura_task', 'dal'])
+                );
+                
+                if ($isDateField && !empty($value)) {
+                    $originalValue = $value;
+                    $value = $this->convertDateFormat($value);
+                    
+                    // Log conversioni date per i primi record
+                    if ($imported < 5 && $originalValue !== $value) {
+                        $this->log("Campo '{$finalHeaders[$i]}': '$originalValue' → '$value'");
+                    }
+                }
+                
+                // Converti stringhe vuote in NULL
+                $cleanValue = ($value === '') ? null : $value;
+                $params[$finalHeaders[$i]] = $cleanValue;
+                
+                // Per tabelle auto-increment, prepara anche parametri senza campo auto-increment
+                if ($isAutoIncrementTable) {
+                    if ($finalHeaders[$i] === $autoIncrementField) {
+                        $hasAutoIncrementValue = !empty($value);
+                    } else {
+                        $paramsWithoutAuto[$finalHeaders[$i]] = $cleanValue;
+                    }
+                }
+            }
+            
+            // Log dei primi 3 record per debug
+            if ($imported < 3) {
+                $this->log("Record " . ($imported + 1) . " parametri: " . json_encode($params, JSON_UNESCAPED_UNICODE));
+                if ($isAutoIncrementTable) {
+                    $this->log("Record " . ($imported + 1) . " auto-increment vuoto: " . ($hasAutoIncrementValue ? 'NO' : 'SI'));
+                }
+            }
+            
+            try {
+                // Scegli quale query utilizzare
+                if ($isAutoIncrementTable && !$hasAutoIncrementValue) {
+                    // Usa query senza auto-increment se il campo è vuoto
+                    $result = $stmtWithoutAuto->execute($paramsWithoutAuto);
+                    $currentStmt = $stmtWithoutAuto;
+                } elseif ($isAutoIncrementTable) {
+                    // Usa query con auto-increment se il campo ha valore
+                    $result = $stmtWithAuto->execute($params);
+                    $currentStmt = $stmtWithAuto;
+                } else {
+                    // Query normale per altre tabelle
+                    $result = $stmt->execute($params);
+                    $currentStmt = $stmt;
+                }
+                
+                // Verifica se il record è stato effettivamente inserito
+                if ($currentStmt->rowCount() > 0) {
+                    $imported++;
+                } else {
+                    $skipped++;
+                    if ($skipped <= 3) {
+                        $this->log("Riga $lineNumber: record duplicato o ignorato");
+                    }
+                }
+                
+                // Mostra progresso ogni 25 record
+                if (($imported + $skipped) % 25 == 0) {
+                    $progress = round((($imported + $skipped) / $totalLines) * 100, 1);
+                    if (php_sapi_name() === 'cli') {
+                        echo "      📝 Processate " . ($imported + $skipped) . "/$totalLines righe ($progress%) - Importati: $imported, Saltati: $skipped\n";
+                    } else {
+                        echo "&nbsp;&nbsp;📝 Processate " . ($imported + $skipped) . "/$totalLines righe ($progress%) - Importati: $imported, Saltati: $skipped<br>";
+                        // Flush output per mostrare progresso in tempo reale nel browser
+                        if (ob_get_level()) ob_flush();
+                        flush();
+                    }
+                }
+                
+            } catch (PDOException $e) {
+                $errors++;
+                $errorCode = $e->getCode();
+                $errorMsg = "Errore riga $lineNumber (codice $errorCode): " . $e->getMessage();
+                $this->log($errorMsg);
+                $this->log("Dati che hanno causato l'errore: " . json_encode($params, JSON_UNESCAPED_UNICODE));
+                
+                // Categorizza gli errori
+                if (strpos($e->getMessage(), 'foreign key') !== false || strpos($e->getMessage(), 'Cannot add or update') !== false) {
+                    $this->log("ERRORE FOREIGN KEY - Verificare esistenza record riferiti");
+                } elseif (strpos($e->getMessage(), 'Duplicate entry') !== false) {
+                    $this->log("ERRORE DUPLICATO - Record già esistente");
+                } elseif (strpos($e->getMessage(), 'Data too long') !== false) {
+                    $this->log("ERRORE LUNGHEZZA - Dati troppo lunghi per il campo");
+                }
+                
+                // Mostra solo i primi 5 errori per non intasare l'output
+                if ($errors <= 5) {
+                    if (php_sapi_name() === 'cli') {
+                        echo "      ⚠️  $errorMsg\n";
+                    } else {
+                        echo "&nbsp;&nbsp;<span style='color: #dc3545;'>⚠️ $errorMsg</span><br>";
+                    }
+                } elseif ($errors == 6) {
+                    if (php_sapi_name() === 'cli') {
+                        echo "      ⚠️  (Altri errori registrati nel log...)\n";
+                    } else {
+                        echo "&nbsp;&nbsp;<span style='color: #dc3545;'>⚠️ (Altri errori registrati nel log...)</span><br>";
+                    }
+                }
+            }
+        }
+        
+        // Riabilita controlli foreign key
+        $this->db->exec("SET foreign_key_checks = 1");
+        
+        fclose($handle);
+        
+        $this->log("Completata lettura file $filePath:");
+        $this->log("- Righe totali processate: " . ($lineNumber - 1));
+        $this->log("- Record importati con successo: $imported");
+        $this->log("- Record saltati/duplicati: $skipped");
+        $this->log("- Errori: $errors");
         
         return [
-            'headers' => $headers,
-            'data' => $data
+            'imported' => $imported,
+            'errors' => $errors,
+            'skipped' => $skipped,
+            'total_lines' => $lineNumber - 1
         ];
     }
     
     /**
-     * Rileva automaticamente il separatore CSV
+     * Converte date dal formato italiano (gg/mm/aa o gg/mm/aaaa) al formato MySQL (YYYY-MM-DD)
      */
-    private function detectCSVSeparator($line) {
-        $separators = [',', ';', '\t', '|'];
-        $maxCount = 0;
-        $bestSeparator = ',';
+    private function convertDateFormat($dateString) {
+        // Rimuovi spazi
+        $dateString = trim($dateString);
         
-        foreach ($separators as $separator) {
-            $actualSeparator = ($separator === '\t') ? "\t" : $separator;
-            $count = substr_count($line, $actualSeparator);
-            
-            if ($count > $maxCount) {
-                $maxCount = $count;
-                $bestSeparator = $actualSeparator;
-            }
-        }
-        
-        return $bestSeparator;
-    }
-    
-    /**
-     * Costruisce la query SQL per inserimento/aggiornamento
-     */
-    private function buildInsertSQL($tableName, $headers, $mode) {
-        $columns = implode(', ', $headers);
-        $placeholders = ':' . implode(', :', $headers);
-        
-        if ($mode === 'update') {
-            $primaryKey = $headers[0];
-            $setClause = [];
-            foreach (array_slice($headers, 1) as $column) {
-                $setClause[] = "$column = :$column";
-            }
-            return "UPDATE $tableName SET " . implode(', ', $setClause) . " WHERE $primaryKey = :$primaryKey";
-        } else {
-            $sql = "INSERT INTO $tableName ($columns) VALUES ($placeholders)";
-            if ($mode === 'upsert') {
-                $updateClause = [];
-                foreach (array_slice($headers, 1) as $column) {
-                    $updateClause[] = "$column = VALUES($column)";
-                }
-                $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $updateClause);
-            }
-            return $sql;
-        }
-    }
-    
-    /**
-     * Processa i dati di una riga applicando le trasformazioni necessarie
-     */
-    private function processRowData($tableName, $headers, $row) {
-        $processedRow = [];
-        
-        foreach ($headers as $index => $column) {
-            $value = isset($row[$index]) ? trim($row[$index]) : '';
-            
-            // Applica trasformazioni specifiche per tabella/campo
-            if (isset($this->fieldMappings[$tableName][$column])) {
-                $transformation = $this->fieldMappings[$tableName][$column];
-                $value = $this->applyTransformation($value, $transformation);
-            }
-            
-            // Trasformazioni generali
-            $value = $this->applyGeneralTransformations($column, $value);
-            
-            $processedRow[$column] = $value;
-        }
-        
-        return $processedRow;
-    }
-    
-    /**
-     * Applica trasformazioni specifiche
-     */
-    private function applyTransformation($value, $transformation) {
-        switch ($transformation) {
-            case 'password_hash':
-                return $value ? password_hash($value, PASSWORD_DEFAULT) : '';
-            case 'enum_fix':
-                return ($value === '' || $value === null) ? 'No' : $value;
-            case 'date_fix':
-                return ($value === '' || $value === '0000-00-00') ? null : $value;
-            default:
-                return $value;
-        }
-    }
-    
-    /**
-     * Applica trasformazioni generali basate sul nome del campo
-     */
-    private function applyGeneralTransformations($column, $value) {
-        // Gestione valori monetari
-        if (preg_match('/(Fatturato|Tariffa|Spese|Valore|Costi)/i', $column)) {
-            return is_numeric($value) ? $value : 0;
-        }
-        
-        // Gestione percentuali (commissioni)
-        if (strpos($column, 'Commissione') !== false) {
-            return is_numeric($value) ? $value : 0;
-        }
-        
-        // Gestione date
-        if (strpos($column, 'Data') === 0 && $value) {
-            // Converte vari formati di data in MySQL format
-            $value = $this->normalizeDate($value);
-        }
-        
-        return $value;
-    }
-    
-    /**
-     * Normalizza formato date
-     */
-    private function normalizeDate($dateString) {
-        if (empty($dateString) || $dateString === '0000-00-00') {
+        // Se è vuoto, ritorna NULL
+        if (empty($dateString)) {
             return null;
         }
         
-        // Prova diversi formati
-        $formats = ['Y-m-d', 'd/m/Y', 'm/d/Y', 'd-m-Y', 'Y/m/d'];
+        // Se è già in formato YYYY-MM-DD, lascia così
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateString)) {
+            return $dateString;
+        }
         
-        foreach ($formats as $format) {
-            $date = DateTime::createFromFormat($format, $dateString);
-            if ($date !== false) {
-                return $date->format('Y-m-d');
+        // Formato italiano gg/mm/aa o gg/mm/aaaa
+        if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/', $dateString, $matches)) {
+            $day = str_pad($matches[1], 2, '0', STR_PAD_LEFT);
+            $month = str_pad($matches[2], 2, '0', STR_PAD_LEFT);
+            $year = $matches[3];
+            
+            // Se anno a 2 cifre, determina il secolo
+            if (strlen($year) == 2) {
+                $yearInt = intval($year);
+                // Se l'anno è <= 30, assume 2000+, altrimenti 1900+
+                // Es: 25 = 2025, 90 = 1990
+                if ($yearInt <= 30) {
+                    $year = '20' . $year;
+                } else {
+                    $year = '19' . $year;
+                }
+            }
+            
+            // Verifica che la data sia valida
+            if (checkdate($month, $day, $year)) {
+                $convertedDate = "$year-$month-$day";
+                $this->log("Conversione data: '$dateString' → '$convertedDate'");
+                return $convertedDate;
+            } else {
+                $this->log("ERRORE: Data non valida '$dateString' (gg=$day, mm=$month, aa=$year)");
+                return null;
             }
         }
         
-        // Se non riesce a parsare, ritorna il valore originale
-        return $dateString;
-    }
-    
-    /**
-     * Esegue upsert (insert o update)
-     */
-    private function upsertRow($tableName, $headers, $row) {
-        $primaryKey = $headers[0];
-        $primaryValue = $row[$primaryKey];
-        
-        // Verifica se il record esiste
-        $checkSql = "SELECT COUNT(*) FROM $tableName WHERE $primaryKey = ?";
-        $stmt = $this->db->prepare($checkSql);
-        $stmt->execute([$primaryValue]);
-        $exists = $stmt->fetchColumn() > 0;
-        
-        if ($exists) {
-            // UPDATE
-            $setClause = [];
-            $values = [];
-            foreach (array_slice($headers, 1) as $column) {
-                $setClause[] = "$column = ?";
-                $values[] = $row[$column];
+        // Formato alternativo dd-mm-yyyy o dd-mm-yy
+        if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/', $dateString, $matches)) {
+            $day = str_pad($matches[1], 2, '0', STR_PAD_LEFT);
+            $month = str_pad($matches[2], 2, '0', STR_PAD_LEFT);
+            $year = $matches[3];
+            
+            if (strlen($year) == 2) {
+                $yearInt = intval($year);
+                if ($yearInt <= 30) {
+                    $year = '20' . $year;
+                } else {
+                    $year = '19' . $year;
+                }
             }
-            $values[] = $primaryValue; // WHERE condition
             
-            $updateSql = "UPDATE $tableName SET " . implode(', ', $setClause) . " WHERE $primaryKey = ?";
-            $stmt = $this->db->prepare($updateSql);
-            $stmt->execute($values);
-            return 'updated';
-        } else {
-            // INSERT
-            $columns = implode(', ', $headers);
-            $placeholders = str_repeat('?,', count($headers) - 1) . '?';
-            $insertSql = "INSERT INTO $tableName ($columns) VALUES ($placeholders)";
-            
-            $stmt = $this->db->prepare($insertSql);
-            $stmt->execute(array_values($row));
-            return 'inserted';
+            if (checkdate($month, $day, $year)) {
+                $convertedDate = "$year-$month-$day";
+                $this->log("Conversione data (formato -): '$dateString' → '$convertedDate'");
+                return $convertedDate;
+            } else {
+                $this->log("ERRORE: Data non valida '$dateString' (formato -)");
+                return null;
+            }
         }
+        
+        // Se non riconosciuto, log e ritorna NULL
+        $this->log("ATTENZIONE: Formato data non riconosciuto: '$dateString'");
+        return null;
     }
     
     /**
-     * Verifica se una riga è vuota
+     * Scrive un messaggio nel log
      */
-    private function isEmptyRow($row) {
-        return empty(array_filter($row, function($value) {
-            return trim($value) !== '';
-        }));
+    private function log($message) {
+        $timestamp = date('Y-m-d H:i:s');
+        $logMessage = "[$timestamp] $message\n";
+        file_put_contents($this->logFile, $logMessage, FILE_APPEND | LOCK_EX);
     }
     
     /**
-     * Svuota una tabella
+     * Formatta i byte in modo leggibile
      */
-    private function truncateTable($tableName) {
-        echo "<div class='log-entry'>🗑️ Svuotamento tabella $tableName...</div>";
-        try {
-            $this->db->exec("SET FOREIGN_KEY_CHECKS = 0");
-            $this->db->exec("TRUNCATE TABLE $tableName");
-            $this->db->exec("SET FOREIGN_KEY_CHECKS = 1");
-            echo "<div class='log-entry success'>✅ Tabella svuotata</div>";
-        } catch (PDOException $e) {
-            echo "<div class='log-entry error'>❌ Errore svuotamento: " . htmlspecialchars($e->getMessage()) . "</div>";
+    private function formatBytes($bytes, $precision = 2) {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
         }
+        
+        return round($bytes, $precision) . ' ' . $units[$i];
     }
     
     /**
      * Mostra statistiche finali
      */
-    private function showFinalStats() {
-        echo "<div class='final-stats'>";
-        echo "<h3>📊 Statistiche Importazione</h3>";
-        echo "<div class='stats-grid'>";
-        echo "<div class='stat-item'><span class='stat-label'>Righe processate:</span> <span class='stat-value'>{$this->stats['processed']}</span></div>";
-        echo "<div class='stat-item'><span class='stat-label'>Righe inserite:</span> <span class='stat-value success'>{$this->stats['inserted']}</span></div>";
-        echo "<div class='stat-item'><span class='stat-label'>Righe aggiornate:</span> <span class='stat-value info'>{$this->stats['updated']}</span></div>";
-        echo "<div class='stat-item'><span class='stat-label'>Errori:</span> <span class='stat-value error'>{$this->stats['errors']}</span></div>";
-        echo "<div class='stat-item'><span class='stat-label'>Righe saltate:</span> <span class='stat-value warning'>{$this->stats['skipped']}</span></div>";
+    public function showFinalStats() {
+        $isCLI = php_sapi_name() === 'cli';
         
-        $successRate = $this->stats['processed'] > 0 
-            ? round(($this->stats['inserted'] + $this->stats['updated']) / $this->stats['processed'] * 100, 2)
-            : 0;
-        echo "<div class='stat-item'><span class='stat-label'>Tasso successo:</span> <span class='stat-value'>{$successRate}%</span></div>";
-        echo "</div>";
-        
-        if ($this->stats['errors'] > 0) {
-            echo "<div class='alert warning'>⚠️ Sono stati rilevati errori. Controlla i dettagli sopra.</div>";
+        if ($isCLI) {
+            echo "\n📊 STATISTICHE FINALI:\n";
+            echo "======================\n";
         } else {
-            echo "<div class='alert success'>🎉 Importazione completata senza errori!</div>";
+            echo "<h3>📊 STATISTICHE FINALI:</h3>";
+            echo "<table style='border-collapse: collapse; width: 100%; margin: 15px 0;'>";
+            echo "<tr style='background-color: #f8f9fa;'>";
+            echo "<th style='border: 1px solid #ddd; padding: 12px; text-align: left;'>Tabella</th>";
+            echo "<th style='border: 1px solid #ddd; padding: 12px; text-align: right;'>Record</th>";
+            echo "</tr>";
         }
-        echo "</div>";
-    }
-    
-    /**
-     * Crea file CSV di esempio
-     */
-    public function createSampleCSVFiles() {
-        echo "📝 Creazione file CSV di esempio...\n";
         
-        $sampleData = $this->getSampleData();
+        $totalRecords = 0;
         
-        foreach ($sampleData as $tableName => $data) {
-            $csvFile = $this->dataDir . '/' . $tableName . '.csv';
-            
-            if (($handle = fopen($csvFile, 'w')) !== FALSE) {
-                // Scrivi header
-                fputcsv($handle, $data['headers']);
+        foreach ($this->importSequence as $tableName) {
+            try {
+                $stmt = $this->db->prepare("SELECT COUNT(*) as count FROM `$tableName`");
+                $stmt->execute();
+                $count = $stmt->fetch()['count'];
                 
-                // Scrivi dati
-                foreach ($data['data'] as $row) {
-                    fputcsv($handle, $row);
+                if ($isCLI) {
+                    echo sprintf("%-25s: %d record\n", $tableName, $count);
+                } else {
+                    $color = $count > 0 ? '#28a745' : '#6c757d';
+                    echo "<tr>";
+                    echo "<td style='border: 1px solid #ddd; padding: 8px;'>$tableName</td>";
+                    echo "<td style='border: 1px solid #ddd; padding: 8px; text-align: right; color: $color; font-weight: bold;'>$count record</td>";
+                    echo "</tr>";
                 }
+                $totalRecords += $count;
                 
-                fclose($handle);
-                echo "  ✅ Creato {$tableName}.csv\n";
+            } catch (PDOException $e) {
+                if ($isCLI) {
+                    echo sprintf("%-25s: Errore\n", $tableName);
+                } else {
+                    echo "<tr>";
+                    echo "<td style='border: 1px solid #ddd; padding: 8px;'>$tableName</td>";
+                    echo "<td style='border: 1px solid #ddd; padding: 8px; text-align: right; color: #dc3545;'>Errore</td>";
+                    echo "</tr>";
+                }
             }
         }
         
-        echo "✅ File CSV di esempio creati nella cartella /Dati\n";
-    }
-    
-    /**
-     * Dati di esempio per i file CSV
-     */
-    private function getSampleData() {
-        return [
-            'ANA_CLIENTI' => [
-                'headers' => ['ID_CLIENTE', 'Cliente', 'Denominazione_Sociale', 'Indirizzo', 'Citta', 'CAP', 'Provincia', 'P_IVA'],
-                'data' => [
-                    ['CLI0001', 'ALBINI', 'ALBINI SRL', 'Via Roma 1', 'Milano', '20100', 'MI', '12345678901'],
-                    ['CLI0002', 'LEVONI', 'LEVONI SPA', 'Via Verdi 2', 'Verona', '37100', 'VR', '12345678902'],
-                    ['CLI0003', 'CALVI CARNI', 'CALVI CARNI SRL', 'Via Bianchi 3', 'Bologna', '40100', 'BO', '12345678903']
-                ]
-            ],
-            'ANA_COLLABORATORI' => [
-                'headers' => ['ID_COLLABORATORE', 'Collaboratore', 'Email', 'PWD', 'Ruolo', 'PIVA'],
-                'data' => [
-                    ['CONS001', 'Alessandro Vaglio', 'avaglio@vaglioandpartners.com', 'Boss01', 'Manager', ''],
-                    ['CONS002', 'Paola Vaglio', 'pvaglio@vaglioandpartners.com', 'Boss02', 'Amministrazione', ''],
-                    ['CONS003', 'Mario Rossi', 'mrossi@vaglioandpartners.com', 'User123', 'User', '']
-                ]
-            ],
-            'ANA_COMMESSE' => [
-                'headers' => ['ID_COMMESSA', 'Commessa', 'Desc_Commessa', 'Tipo_Commessa', 'ID_CLIENTE', 'Commissione', 'ID_COLLABORATORE', 'Data_Apertura_Commessa', 'Stato_Commessa'],
-                'data' => [
-                    ['COM0001', 'ALBINI AUDIT', 'Audit sistema qualità', 'Cliente', 'CLI0001', '0.15', 'CONS001', '2024-01-15', 'In corso'],
-                    ['COM0002', 'LEVONI FORMAZIONE', 'Formazione personale', 'Cliente', 'CLI0002', '0.20', 'CONS003', '2024-02-01', 'In corso']
-                ]
-            ]
-        ];
-    }
-    
-    /**
-     * Formatta dimensione file
-     */
-    public function formatBytes($size) {
-        $units = ['B', 'KB', 'MB', 'GB'];
-        $power = $size > 0 ? floor(log($size, 1024)) : 0;
-        return number_format($size / pow(1024, $power), 2, '.', '') . ' ' . $units[$power];
+        if ($isCLI) {
+            echo "======================\n";
+            echo sprintf("%-25s: %d record\n", "TOTALE", $totalRecords);
+        } else {
+            echo "<tr style='background-color: #e9ecef; font-weight: bold;'>";
+            echo "<td style='border: 1px solid #ddd; padding: 8px;'>TOTALE</td>";
+            echo "<td style='border: 1px solid #ddd; padding: 8px; text-align: right; color: #007bff;'>$totalRecords record</td>";
+            echo "</tr>";
+            echo "</table>";
+        }
     }
 }
 
-// Funzione helper per formattare bytes
-function formatBytes($size) {
-    $units = ['B', 'KB', 'MB', 'GB'];
-    $power = $size > 0 ? floor(log($size, 1024)) : 0;
-    return number_format($size / pow(1024, $power), 2, '.', '') . ' ' . $units[$power];
-}
-
-// ============================================================================
-// INTERFACCIA WEB
-// ============================================================================
-
-$action = $_GET['action'] ?? $_POST['action'] ?? 'scan';
-$message = '';
-$messageType = '';
-
-try {
-    if ($action === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+// Esecuzione se chiamato direttamente
+if (basename(__FILE__) == basename($_SERVER["SCRIPT_FILENAME"])) {
+    try {
+        // Se siamo in modalità web, abilita output buffering per mostrare progresso
+        if (php_sapi_name() !== 'cli') {
+            // Disabilita output buffering per vedere il progresso in tempo reale
+            if (ob_get_level()) ob_end_clean();
+            
+            echo "<!DOCTYPE html>";
+            echo "<html><head>";
+            echo "<meta charset='UTF-8'>";
+            echo "<title>Importazione CSV - Database VP</title>";
+            echo "<style>";
+            echo "body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }";
+            echo "h1 { color: #007bff; }";
+            echo ".container { background-color: #f8f9fa; padding: 20px; border-radius: 10px; }";
+            echo "</style>";
+            echo "</head><body>";
+            echo "<h1>🗂️ Importazione Dati CSV - Database VP</h1>";
+            echo "<div class='container'>";
+        }
+        
         $importer = new CSVImporter();
+        $importer->run();
+        $importer->showFinalStats();
         
-        // Opzioni importazione
-        $options = [
-            'mode' => $_POST['import_mode'] ?? 'insert',
-            'truncate' => isset($_POST['truncate_tables'])
-        ];
+        if (php_sapi_name() !== 'cli') {
+            echo "</div>";
+            echo "<div style='margin-top: 20px; padding: 15px; background-color: #d4edda; border-radius: 5px;'>";
+            echo "<p><strong>🎉 Processo completato!</strong></p>";
+            echo "<p><a href='" . $_SERVER['PHP_SELF'] . "' style='color: #007bff;'>📥 Esegui nuova importazione</a></p>";
+            echo "</div>";
+            echo "</body></html>";
+        }
         
-        // Avvia importazione
-        ob_start();
-        $stats = $importer->importAllCSV($options);
-        $importOutput = ob_get_clean();
-        
-    } elseif ($action === 'create_samples') {
-        $importer = new CSVImporter();
-        ob_start();
-        $importer->createSampleCSVFiles();
-        $createOutput = ob_get_clean();
-        $message = "File CSV di esempio creati con successo!";
-        $messageType = 'success';
+    } catch (Exception $e) {
+        if (php_sapi_name() === 'cli') {
+            echo "\n💥 ERRORE FATALE: " . $e->getMessage() . "\n";
+            echo "Controlla la configurazione del database e la presenza dei file CSV.\n";
+        } else {
+            echo "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; margin: 10px 0; border-radius: 5px;'>";
+            echo "<h3>💥 ERRORE FATALE</h3>";
+            echo "<p><strong>Errore:</strong> " . $e->getMessage() . "</p>";
+            echo "<p>Controlla la configurazione del database e la presenza dei file CSV.</p>";
+            echo "<p><a href='" . $_SERVER['PHP_SELF'] . "' style='color: #007bff;'>🔄 Riprova</a></p>";
+            echo "</div>";
+            if (isset($importer)) {
+                echo "</div></body></html>";
+            }
+        }
+        exit(1);
     }
-    
-} catch (Exception $e) {
-    $message = $e->getMessage();
-    $messageType = 'error';
 }
-
-// Scansiona sempre i file disponibili
-$importer = new CSVImporter();
-$scanResult = $importer->scanCSVFiles();
 ?>
-
-<!DOCTYPE html>
-<html lang="it">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Importazione CSV - Vaglio & Partners</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f8f9fa; line-height: 1.6; }
-        
-        .header { background: #28a745; color: white; padding: 1.5rem; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .header h1 { margin-bottom: 0.5rem; }
-        .header p { opacity: 0.9; }
-        
-        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
-        
-        .card { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 2rem; overflow: hidden; }
-        .card-header { background: #f8f9fa; padding: 1rem; border-bottom: 1px solid #dee2e6; }
-        .card-header h3 { color: #495057; }
-        .card-body { padding: 2rem; }
-        
-        .form-group { margin-bottom: 1.5rem; }
-        .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: #495057; }
-        .form-control { width: 100%; padding: 0.75rem; border: 1px solid #ced4da; border-radius: 4px; font-size: 1rem; }
-        .form-control:focus { outline: none; border-color: #28a745; box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.1); }
-        
-        .checkbox-group { display: flex; align-items: center; gap: 0.5rem; }
-        .checkbox-group input[type="checkbox"] { transform: scale(1.2); }
-        
-        .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; text-decoration: none; display: inline-block; transition: all 0.3s; margin-right: 0.5rem; margin-bottom: 0.5rem; }
-        .btn-primary { background: #28a745; color: white; }
-        .btn-primary:hover { background: #218838; }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-secondary:hover { background: #545b62; }
-        .btn-warning { background: #ffc107; color: #212529; }
-        .btn-warning:hover { background: #e0a800; }
-        
-        .alert { padding: 1rem; border-radius: 4px; margin-bottom: 1rem; }
-        .alert.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .alert.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .alert.warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
-        .alert.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
-        
-        .file-list { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 1rem; }
-        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid #eee; }
-        .file-item:last-child { border-bottom: none; }
-        .file-info { font-family: monospace; font-size: 0.9rem; color: #6c757d; }
-        
-        .import-output { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 1rem; max-height: 500px; overflow-y: auto; }
-        
-        .log-entry { padding: 0.25rem 0; border-bottom: 1px solid #eee; }
-        .log-entry:last-child { border-bottom: none; }
-        .log-entry.success { color: #28a745; }
-        .log-entry.error { color: #dc3545; }
-        .log-entry.warning { color: #ffc107; }
-        
-        .progress-container { background: #e9ecef; border-radius: 4px; height: 8px; margin: 0.5rem 0; overflow: hidden; }
-        .progress-bar { background: #28a745; height: 100%; transition: width 0.3s ease; width: 0%; }
-        
-        .table-section { margin: 1rem 0; padding: 1rem; background: #f8f9fa; border-left: 4px solid #28a745; }
-        .table-stats { margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: 4px; }
-        
-        .final-stats { margin-top: 2rem; padding: 1.5rem; background: #f8f9fa; border-radius: 8px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin: 1rem 0; }
-        .stat-item { display: flex; justify-content: space-between; padding: 0.5rem; background: white; border-radius: 4px; }
-        .stat-label { font-weight: 500; }
-        .stat-value { font-weight: bold; }
-        .stat-value.success { color: #28a745; }
-        .stat-value.error { color: #dc3545; }
-        .stat-value.warning { color: #ffc107; }
-        .stat-value.info { color: #17a2b8; }
-        
-        .requirements { background: #e8f5e8; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; border-left: 4px solid #28a745; }
-        .requirements h4 { color: #155724; margin-bottom: 1rem; }
-        .requirements ul { margin-left: 1.5rem; }
-        .requirements li { margin-bottom: 0.5rem; }
-        
-        .missing-files { background: #fff3cd; padding: 1rem; border-radius: 4px; border-left: 4px solid #ffc107; margin: 1rem 0; }
-        
-        .import-section { margin-top: 1rem; }
-        .import-section h3 { color: #28a745; margin-bottom: 1rem; }
-        
-        @media (max-width: 768px) {
-            .container { padding: 0 0.5rem; }
-            .card-body { padding: 1rem; }
-            .stats-grid { grid-template-columns: 1fr; }
-            .file-item { flex-direction: column; align-items: flex-start; }
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>📂 Importazione Dati CSV</h1>
-        <p>Sistema di importazione CSV per Vaglio & Partners Database</p>
-    </div>
-
-    <div class="container">
-        <?php if ($message): ?>
-            <div class="alert <?= $messageType ?>">
-                <?= htmlspecialchars($message) ?>
-            </div>
-        <?php endif; ?>
-
-        <!-- Sezione Requisiti -->
-        <div class="requirements">
-            <h4>📋 Struttura File CSV</h4>
-            <ul>
-                <li><strong>Posizione:</strong> Crea una cartella <code>/Dati</code> nella stessa directory di questo file</li>
-                <li><strong>Nomi file:</strong> Devono essere esattamente: <code>ANA_CLIENTI.csv</code>, <code>ANA_COLLABORATORI.csv</code>, etc.</li>
-                <li><strong>Formato:</strong> CSV con separatori supportati: virgola (,), punto e virgola (;), tab, pipe (|)</li>
-                <li><strong>Codifica:</strong> UTF-8 (per caratteri speciali)</li>
-                <li><strong>Rilevamento automatico:</strong> Il separatore viene rilevato automaticamente</li>
-                <li><strong>Ordine importazione:</strong> Automatico (rispetta le relazioni foreign key)</li>
-            </ul>
-        </div>
-
-        <!-- Status File CSV -->
-        <div class="card">
-            <div class="card-header">
-                <h3>📁 Status File CSV</h3>
-            </div>
-            <div class="card-body">
-                <?php if (!empty($scanResult['available'])): ?>
-                    <h4>✅ File Disponibili (<?= count($scanResult['available']) ?>)</h4>
-                    <div class="file-list">
-                        <?php foreach ($scanResult['available'] as $table => $info): ?>
-                            <div class="file-item">
-                                <div>
-                                    <strong><?= $table ?>.csv</strong>
-                                    <span class="file-info">- <?= $info['rows'] ?> righe</span>
-                                </div>
-                                <div class="file-info">
-                                    <?= formatBytes($info['size']) ?> | 
-                                    Modificato: <?= date('d/m/Y H:i', $info['modified']) ?>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php else: ?>
-                    <div class="alert warning">
-                        ⚠️ Nessun file CSV trovato nella cartella <code>/Dati</code>
-                    </div>
-                <?php endif; ?>
-
-                <?php if (!empty($scanResult['missing'])): ?>
-                    <div class="missing-files">
-                        <h4>❌ File Mancanti</h4>
-                        <p>I seguenti file non sono stati trovati:</p>
-                        <ul>
-                            <?php foreach ($scanResult['missing'] as $table): ?>
-                                <li><code><?= $table ?>.csv</code></li>
-                            <?php endforeach; ?>
-                        </ul>
-                    </div>
-                <?php endif; ?>
-
-                <div style="margin-top: 1.5rem;">
-                    <a href="?action=create_samples" class="btn btn-warning">
-                        📝 Crea File CSV di Esempio
-                    </a>
-                    <a href="?" class="btn btn-secondary">
-                        🔄 Aggiorna Status
-                    </a>
-                </div>
-            </div>
-        </div>
-
-        <!-- Form Importazione -->
-        <?php if (!empty($scanResult['available']) && !isset($importOutput)): ?>
-        <div class="card">
-            <div class="card-header">
-                <h3>🚀 Importazione CSV</h3>
-            </div>
-            <div class="card-body">
-                <form method="post">
-                    <div class="form-group">
-                        <label for="import_mode">Modalità importazione:</label>
-                        <select id="import_mode" name="import_mode" class="form-control">
-                            <option value="insert">Insert - Solo nuovi record (ignora duplicati)</option>
-                            <option value="upsert">Upsert - Inserisce o aggiorna automaticamente</option>
-                            <option value="update">Update - Solo aggiornamento record esistenti</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="truncate_tables" name="truncate_tables">
-                            <label for="truncate_tables">⚠️ Svuota tabelle prima dell'importazione (ATTENZIONE: cancella tutti i dati esistenti!)</label>
-                        </div>
-                    </div>
-
-                    <button type="submit" name="action" value="import" class="btn btn-primary">
-                        🚀 Avvia Importazione
-                    </button>
-                </form>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Output Creazione Sample -->
-        <?php if (isset($createOutput)): ?>
-        <div class="card">
-            <div class="card-header">
-                <h3>📝 File CSV di Esempio Creati</h3>
-            </div>
-            <div class="card-body">
-                <div class="import-output">
-                    <?= nl2br(htmlspecialchars($createOutput)) ?>
-                </div>
-                <div style="margin-top: 1rem;">
-                    <a href="?" class="btn btn-primary">🔄 Aggiorna Pagina</a>
-                </div>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Risultati Importazione -->
-        <?php if (isset($importOutput)): ?>
-        <div class="card">
-            <div class="card-header">
-                <h3>📊 Risultati Importazione</h3>
-            </div>
-            <div class="card-body">
-                <div class="import-output">
-                    <?= $importOutput ?>
-                </div>
-                
-                <div style="margin-top: 2rem; text-align: center;">
-                    <a href="?" class="btn btn-primary">🔄 Nuova Importazione</a>
-                    <a href="log_viewer.php" class="btn btn-secondary">📋 Visualizza Log</a>
-                </div>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Sezione Aiuto -->
-        <div class="card">
-            <div class="card-header">
-                <h3>❓ Guida e Struttura File</h3>
-            </div>
-            <div class="card-body">
-                <h4>📂 Struttura Directory:</h4>
-                <pre style="background: #f8f9fa; padding: 1rem; border-radius: 4px; margin: 1rem 0;">
-/tuo-progetto/
-├── import_csv.php        # Questo file
-├── Dati/                # Cartella con file CSV
-│   ├── ANA_CLIENTI.csv
-│   ├── ANA_COLLABORATORI.csv
-│   ├── ANA_COMMESSE.csv
-│   ├── ANA_TASK.csv
-│   ├── ANA_TARIFFE_COLLABORATORI.csv
-│   ├── FACT_GIORNATE.csv
-│   └── FACT_FATTURE.csv
-└── ...
-                </pre>
-
-                <h4>📋 Intestazioni CSV Richieste:</h4>
-                <div style="margin: 1rem 0;">
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>ANA_CLIENTI.csv</strong></summary>
-                        <code>ID_CLIENTE,Cliente,Denominazione_Sociale,Indirizzo,Citta,CAP,Provincia,P_IVA</code>
-                    </details>
-                    
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>ANA_COLLABORATORI.csv</strong></summary>
-                        <code>ID_COLLABORATORE,Collaboratore,Email,PWD,Ruolo,PIVA</code>
-                    </details>
-                    
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>ANA_COMMESSE.csv</strong></summary>
-                        <code>ID_COMMESSA,Commessa,Desc_Commessa,Tipo_Commessa,ID_CLIENTE,Commissione,ID_COLLABORATORE,Data_Apertura_Commessa,Stato_Commessa</code>
-                    </details>
-                    
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>ANA_TASK.csv</strong></summary>
-                        <code>ID_TASK,Task,Desc_Task,ID_COMMESSA,ID_COLLABORATORE,Tipo,Data_Apertura_Task,Stato_Task,gg_previste,Spese_Comprese,Valore_Spese_std,Valore_gg</code>
-                    </details>
-                    
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>ANA_TARIFFE_COLLABORATORI.csv</strong></summary>
-                        <code>ID_TARIFFA,ID_COLLABORATORE,ID_COMMESSA,Tariffa_gg,Spese_comprese,Dal</code>
-                    </details>
-                    
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>FACT_GIORNATE.csv</strong></summary>
-                        <code>ID_GIORNATA,Data,ID_COLLABORATORE,ID_TASK,Tipo,Desk,gg,Spese_Viaggi,Vitto_alloggio,Altri_costi,Note</code>
-                    </details>
-                    
-                    <details style="margin-bottom: 0.5rem;">
-                        <summary><strong>FACT_FATTURE.csv</strong></summary>
-                        <code>ID_FATTURA,Data,ID_CLIENTE,TIPO,NR,ID_COMMESSA,Fatturato_gg,Fatturato_Spese,Fatturato_TOT,Note,Riferimento_Ordine,Data_Ordine,Tempi_Pagamento,Scadenza_Pagamento,Data_Pagamento,Valore_Pagato</code>
-                    </details>
-                </div>
-
-                <h4>🔧 Trasformazioni Automatiche:</h4>
-                <ul style="margin: 1rem 0 2rem 1.5rem;">
-                    <li><strong>Password:</strong> Hash automatico per campo PWD in ANA_COLLABORATORI</li>
-                    <li><strong>Date:</strong> Conversione automatica da vari formati (DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD)</li>
-                    <li><strong>Valori vuoti:</strong> Gestione automatica di ENUM (vuoto → 'No')</li>
-                    <li><strong>Importi:</strong> Conversione automatica di valori numerici</li>
-                    <li><strong>Foreign Key:</strong> Importazione nell'ordine corretto</li>
-                </ul>
-
-                <h4>🔗 Link Utili:</h4>
-                <div style="margin-top: 1rem;">
-                    <a href="setup.php" class="btn btn-secondary">🏗️ Setup Database</a>
-                    <a href="log_viewer.php" class="btn btn-secondary">📋 Visualizza Log</a>
-                    <a href="cleanup.php" class="btn btn-secondary">🗑️ Cleanup Database</a>
-                    <a href="import.php" class="btn btn-secondary">📊 Import Excel</a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // Conferma per operazioni pericolose
-        document.addEventListener('DOMContentLoaded', function() {
-            const form = document.querySelector('form');
-            if (form) {
-                form.addEventListener('submit', function(e) {
-                    const truncate = document.getElementById('truncate_tables');
-                    if (truncate && truncate.checked) {
-                        if (!confirm('⚠️ ATTENZIONE: Stai per cancellare tutti i dati esistenti nelle tabelle!\n\nSei sicuro di voler continuare?')) {
-                            e.preventDefault();
-                        }
-                    }
-                });
-            }
-        });
-
-        // Auto-refresh progress bars
-        function updateProgressBars() {
-            const progressBars = document.querySelectorAll('.progress-bar');
-            // La logica di aggiornamento è gestita dal PHP
-        }
-
-        // Auto-scroll per seguire il progresso
-        function scrollToBottom() {
-            const importOutput = document.querySelector('.import-output');
-            if (importOutput) {
-                importOutput.scrollTop = importOutput.scrollHeight;
-            }
-        }
-
-        // Aggiorna ogni secondo durante l'importazione
-        const progressElements = document.querySelectorAll('.progress-bar');
-        if (progressElements.length > 0) {
-            setInterval(scrollToBottom, 1000);
-        }
-    </script>
-</body>
-</html>
